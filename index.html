@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Daily Swing Backtest Simulator</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#1a1a2e;color:#e0e0e0}
+.wrap{max-width:1100px;margin:0 auto;padding:12px}
+h1{font-size:18px;font-weight:500;margin-bottom:14px;color:#fff;letter-spacing:0.5px}
+.top{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:center}
+.top button{padding:6px 14px;border:1px solid #444;border-radius:6px;background:#2a2a3e;color:#e0e0e0;cursor:pointer;font-size:12px}
+.top button:hover{background:#3a3a4e}
+.top button.primary{background:#2563eb;border-color:#2563eb;color:#fff}
+.top button.primary:hover{background:#1d4ed8}
+.top select{padding:6px 10px;border:1px solid #444;border-radius:6px;background:#2a2a3e;color:#e0e0e0;font-size:12px;max-width:220px}
+.info{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin-bottom:10px}
+.ic{background:#2a2a3e;border-radius:6px;padding:8px 10px}
+.ic .lb{font-size:10px;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-bottom:1px}
+.ic .vl{font-size:16px;font-weight:500}
+.g{color:#22c55e}.r{color:#ef4444}.fl{color:#888}
+.m3up{color:#22c55e}.m3dn{color:#ef4444}
+canvas{width:100%;border-radius:8px;background:#16162a;border:1px solid #333}
+.ti{background:#2a2a3e;border-radius:8px;padding:12px;margin-top:10px;font-size:13px}
+.ti .rw{display:flex;justify-content:space-between;padding:3px 0}
+.ti .k{color:#888}
+.sp{display:flex;align-items:center;gap:6px;font-size:12px;color:#888;margin-left:auto}
+.sp input{width:70px}
+.pill{display:inline-block;padding:1px 8px;border-radius:4px;font-size:11px;font-weight:500}
+.pill.long{background:#14532d;color:#22c55e}.pill.short{background:#450a0a;color:#ef4444}
+.pill.longhalf{background:#1a3a2a;color:#4ade80}.pill.shorthalf{background:#3a1a1a;color:#f87171}
+.pill.stopped{background:#451a03;color:#f97316}
+.pill.flat{background:#333;color:#888}
+.pb{height:3px;background:#333;border-radius:2px;margin-bottom:10px}
+.pb .br{height:100%;background:#2563eb;border-radius:2px;transition:width .05s}
+.tl{margin-top:10px;max-height:160px;overflow-y:auto}
+.tl table{width:100%;border-collapse:collapse;font-size:11px}
+.tl th{color:#666;font-weight:400;text-align:left;padding:3px 6px;border-bottom:1px solid #333}
+.tl td{padding:3px 6px;border-bottom:1px solid #222}
+#loading{text-align:center;padding:40px;color:#888;font-size:14px}
+</style>
+</head><body>
+<div class="wrap">
+<h1>Daily swing backtest simulator</h1>
+<div id="loading">Loading data...</div>
+<div id="main" style="display:none">
+<div class="pb"><div class="br" id="pbar"></div></div>
+<div class="top">
+<button id="prevTrade">&#9664;&#9664;</button>
+<button id="prevDay">&#9664;Day</button>
+<button id="prev">&#9664;</button>
+<button id="play" class="primary">&#9654;</button>
+<button id="next">&#9654;</button>
+<button id="nextDay">Day&#9654;</button>
+<button id="nextTrade">&#9654;&#9654;</button>
+<select id="jumpTrade"></select>
+<div class="sp"><span>Speed</span><input type="range" min="10" max="500" value="100" id="spd" step="10"><span id="sv">100ms</span></div>
+</div>
+<div class="info">
+<div class="ic"><div class="lb">Date / Time</div><div class="vl" id="iDt">-</div></div>
+<div class="ic"><div class="lb">ES price</div><div class="vl" id="iP">-</div></div>
+<div class="ic"><div class="lb">M3</div><div class="vl" id="iM3">-</div></div>
+<div class="ic"><div class="lb">Position</div><div class="vl" id="iTrade">-</div></div>
+<div class="ic"><div class="lb">Open P&L</div><div class="vl" id="iPnl">-</div></div>
+<div class="ic"><div class="lb">Cumulative</div><div class="vl" id="iCum">-</div></div>
+</div>
+<canvas id="chart" height="420"></canvas>
+<div class="ti" id="tradeInfo"></div>
+<div class="tl" id="tradeList"></div>
+</div>
+</div>
+<script src="data.js"></script>
+<script>
+document.getElementById('loading').style.display='none';
+document.getElementById('main').style.display='block';
+const bars=D.bars,trades=D.trades;
+const cv=document.getElementById('chart'),cx=cv.getContext('2d');
+let ci=0,playing=false,timer=null;
+const jmp=document.getElementById('jumpTrade');
+trades.forEach((t,i)=>{const o=document.createElement('option');o.value=i;o.textContent='#'+(i+1)+' '+t.dl+' '+bars[t.ei].dt;jmp.appendChild(o)});
+function spd(){return parseInt(document.getElementById('spd').value)}
+document.getElementById('spd').oninput=function(){document.getElementById('sv').textContent=this.value+'ms'};
+
+function draw(){
+const dpr=window.devicePixelRatio||1;const rect=cv.getBoundingClientRect();
+cv.width=rect.width*dpr;cv.height=420*dpr;cx.scale(dpr,dpr);
+const W=rect.width,H=420;cx.clearRect(0,0,W,H);cx.fillStyle='#16162a';cx.fillRect(0,0,W,H);
+const ws=120;const si=Math.max(0,ci-ws+1),ei=ci;
+const vb=bars.slice(si,ei+1);if(!vb.length)return;
+const pr=[];vb.forEach(b=>{pr.push(b.h);pr.push(b.l)});
+let mn=Math.min(...pr),mx=Math.max(...pr);const pd=(mx-mn)*.1||50;mn-=pd;mx+=pd;
+const bw=Math.max(2,(W-60)/ws),gp=bw*.25;
+const cL=50,cR=W-10,cT=15,cB=H-25;
+function pY(p){return cT+(1-(p-mn)/(mx-mn))*(cB-cT)}
+cx.strokeStyle='#2a2a3e';cx.lineWidth=.5;
+for(let i=0;i<=5;i++){const p=mn+(mx-mn)*i/5,y=pY(p);cx.beginPath();cx.moveTo(cL,y);cx.lineTo(cR,y);cx.stroke();
+cx.fillStyle='#555';cx.font='10px sans-serif';cx.textAlign='right';cx.fillText(Math.round(p).toLocaleString(),cL-4,y+3)}
+const at=trades.filter(t=>t.ei<=ci&&t.xi>ci);
+at.forEach(t=>{
+const sy=pY(t.sp);if(sy>=cT&&sy<=cB){cx.strokeStyle='#ef444460';cx.lineWidth=1;cx.setLineDash([4,4]);cx.beginPath();cx.moveTo(cL,sy);cx.lineTo(cR,sy);cx.stroke();cx.setLineDash([]);cx.fillStyle='#ef4444';cx.font='9px sans-serif';cx.textAlign='left';cx.fillText('Stop '+Math.round(t.sp),cR-55,sy-3)}
+const ey=pY(t.ep);if(ey>=cT&&ey<=cB){cx.strokeStyle=t.dir==='Long'?'#22c55e50':'#ef444450';cx.lineWidth=1;cx.setLineDash([2,2]);cx.beginPath();cx.moveTo(cL,ey);cx.lineTo(cR,ey);cx.stroke();cx.setLineDash([]);cx.fillStyle=t.dir==='Long'?'#22c55e':'#ef4444';cx.font='9px sans-serif';cx.textAlign='left';cx.fillText('Entry '+Math.round(t.ep),cL+2,ey-3)}
+});
+const justExited=trades.filter(t=>t.xi===ci);
+justExited.forEach(t=>{
+if(t.st){const sy=pY(t.sp);if(sy>=cT&&sy<=cB){cx.strokeStyle='#f9731680';cx.lineWidth=2;cx.setLineDash([]);cx.beginPath();cx.moveTo(cL,sy);cx.lineTo(cR,sy);cx.stroke();cx.fillStyle='#f97316';cx.font='10px sans-serif';cx.textAlign='left';cx.fillText('STOPPED '+Math.round(t.sp),cR-80,sy-4)}}
+});
+vb.forEach((b,i)=>{
+const x=cL+i*bw+bw/2,gi=si+i;
+let inT=false,tDir=null;
+trades.forEach(t=>{if(gi>=t.ei&&gi<=Math.min(t.xi,ci)){inT=true;tDir=t.dir}});
+const up=b.c>=b.o;
+cx.strokeStyle=inT?(tDir==='Long'?'#22c55e':'#f97316'):(up?'#22c55e80':'#ef444480');
+cx.lineWidth=1;cx.beginPath();cx.moveTo(x,pY(b.h));cx.lineTo(x,pY(b.l));cx.stroke();
+const bww=bw-gp,bt=pY(Math.max(b.o,b.c)),bb=pY(Math.min(b.o,b.c)),bh=Math.max(1,bb-bt);
+cx.fillStyle=inT?(tDir==='Long'?(up?'#22c55e':'#166534'):(up?'#991b1b':'#ef4444')):(up?'#22c55e60':'#ef444460');
+cx.fillRect(x-bww/2,bt,bww,bh);
+if(i%20===0){cx.fillStyle='#444';cx.font='9px sans-serif';cx.textAlign='center';cx.fillText(b.dt.substring(0,8),x,cB+14)}
+});
+const cP=bars[ci].c,cY=pY(cP);cx.strokeStyle='#ffffff30';cx.lineWidth=.5;cx.setLineDash([2,2]);cx.beginPath();cx.moveTo(cL,cY);cx.lineTo(cR,cY);cx.stroke();cx.setLineDash([])
+}
+
+function upd(){
+const b=bars[ci];
+document.getElementById('iDt').textContent=b.dt;
+document.getElementById('iP').textContent=b.c.toLocaleString();
+document.getElementById('pbar').style.width=(ci/(bars.length-1)*100)+'%';
+const m3el=document.getElementById('iM3');
+m3el.textContent=b.m3||'-';
+m3el.className='vl '+(b.m3==='Up'?'m3up':b.m3==='Down'?'m3dn':'fl');
+const at=trades.filter(t=>t.ei<=ci&&t.xi>ci);
+let opnl=0;
+at.forEach(t=>{
+const rawPnl=t.dir==='Long'?b.c-t.ep:t.ep-b.c;
+const stopLoss=t.dir==='Long'?t.sp-t.ep:t.ep-t.sp;
+if(t.dir==='Long'&&b.l<=t.sp){opnl+=stopLoss}
+else if(t.dir==='Short'&&b.h>=t.sp){opnl+=stopLoss}
+else{opnl+=rawPnl}
+});
+const pe=document.getElementById('iPnl');
+if(at.length){pe.textContent=(opnl>=0?'+':'')+opnl.toFixed(2);pe.className='vl '+(opnl>=0?'g':'r')}
+else{pe.textContent='-';pe.className='vl fl'}
+let cum=0;trades.forEach(t=>{if(t.xi<=ci)cum+=t.pnl});cum+=opnl;
+const ce=document.getElementById('iCum');ce.textContent=(cum>=0?'+':'')+cum.toFixed(0)+' pts';ce.className='vl '+(cum>=0?'g':'r');
+const posEl=document.getElementById('iTrade');
+if(at.length){
+const labels=at.map(t=>t.dl);const unique=[...new Set(labels)];
+posEl.innerHTML=unique.map(l=>{
+const cls=l.includes('1/2')?(l.includes('Long')?'longhalf':'shorthalf'):(l.includes('Long')?'long':'short');
+return '<span class="pill '+cls+'">'+l+'</span>'}).join(' ');
+}else{posEl.innerHTML='<span class="pill flat">Flat</span>'}
+let html='';
+if(at.length){
+at.forEach(t=>{
+const rawPnl=t.dir==='Long'?b.c-t.ep:t.ep-b.c;
+const hold=ci-t.ei;
+const cls=t.dl.includes('1/2')?(t.dir==='Long'?'longhalf':'shorthalf'):(t.dir.toLowerCase());
+html+='<div class="rw"><span class="k">Position</span><span class="pill '+cls+'">'+t.dl+'</span></div>';
+html+='<div class="rw"><span class="k">Entry</span><span>'+t.ep.toLocaleString()+' ('+bars[t.ei].dt+')</span></div>';
+html+='<div class="rw"><span class="k">Stop (4%)</span><span class="r">'+t.sp.toLocaleString()+'</span></div>';
+html+='<div class="rw"><span class="k">Hold</span><span>'+Math.round(hold/24)+' days ('+hold+' bars)</span></div>';
+html+='<div class="rw"><span class="k">Open P&L</span><span class="'+(rawPnl>=0?'g':'r')+'">'+(rawPnl>=0?'+':'')+rawPnl.toFixed(2)+' pts</span></div>';
+if(at.length>1)html+='<hr style="border:none;border-top:1px solid #333;margin:4px 0">'});
+}else{
+const jc=trades.filter(t=>t.xi===ci);
+if(jc.length){jc.forEach(t=>{
+const cls=t.dl.includes('1/2')?(t.dir==='Long'?'longhalf':'shorthalf'):(t.dir.toLowerCase());
+html+='<div class="rw"><span class="k">Closed</span><span class="pill '+cls+'">'+t.dl+'</span>'+(t.st?' <span class="pill stopped">STOPPED OUT</span>':'')+'</div>';
+html+='<div class="rw"><span class="k">Result</span><span class="'+(t.pnl>=0?'g':'r')+'">'+(t.pnl>=0?'+':'')+t.pnl.toFixed(2)+' pts</span></div>'})}
+else{html='<span class="fl">No active position</span>'}}
+document.getElementById('tradeInfo').innerHTML=html;
+const comp=trades.filter(t=>t.xi<=ci);
+if(comp.length){let tb='<table><tr><th>#</th><th>Position</th><th>P&L</th><th>Note</th></tr>';
+comp.slice(-8).reverse().forEach((t,i)=>{
+const cls=t.dl.includes('1/2')?(t.dir==='Long'?'longhalf':'shorthalf'):(t.dir.toLowerCase());
+tb+='<tr><td>'+(comp.length-i)+'</td><td><span class="pill '+cls+'">'+t.dl+'</span></td>';
+tb+='<td class="'+(t.pnl>=0?'g':'r')+'">'+(t.pnl>=0?'+':'')+t.pnl.toFixed(2)+'</td>';
+tb+='<td>'+(t.st?'<span class="pill stopped">Stopped</span>':'')+'</td></tr>'});
+tb+='</table>';document.getElementById('tradeList').innerHTML=tb}
+}
+
+function step(n){ci=Math.max(0,Math.min(bars.length-1,ci+n));draw();upd()}
+function skipDay(dir){const cur=bars[ci].dt.substring(0,8);let n=ci+dir;while(n>=0&&n<bars.length&&bars[n].dt.substring(0,8)===cur)n+=dir;if(n>=0&&n<bars.length){ci=n;draw();upd()}}
+function jumpTrade(ti,toEntry){if(ti<0||ti>=trades.length)return;ci=toEntry?trades[ti].ei:trades[ti].xi;jmp.value=ti;draw();upd()}
+function play(){if(playing){clearInterval(timer);playing=false;document.getElementById('play').innerHTML='&#9654;';return}
+playing=true;document.getElementById('play').innerHTML='&#9724;';
+timer=setInterval(()=>{if(ci>=bars.length-1){clearInterval(timer);playing=false;document.getElementById('play').innerHTML='&#9654;';return}step(1)},spd())}
+document.getElementById('play').onclick=play;
+document.getElementById('next').onclick=()=>step(1);
+document.getElementById('prev').onclick=()=>step(-1);
+document.getElementById('nextDay').onclick=()=>skipDay(1);
+document.getElementById('prevDay').onclick=()=>skipDay(-1);
+document.getElementById('nextTrade').onclick=()=>{const n=trades.find(t=>t.ei>ci);if(n)jumpTrade(trades.indexOf(n),true)};
+document.getElementById('prevTrade').onclick=()=>{for(let i=trades.length-1;i>=0;i--){if(trades[i].ei<ci){jumpTrade(i,true);break}}};
+jmp.onchange=()=>jumpTrade(parseInt(jmp.value),true);
+window.addEventListener('resize',()=>draw());
+document.addEventListener('keydown',e=>{if(e.key==='ArrowRight')step(1);else if(e.key==='ArrowLeft')step(-1);else if(e.key==='ArrowUp'){e.preventDefault();skipDay(1)}else if(e.key==='ArrowDown'){e.preventDefault();skipDay(-1)}else if(e.key===' '){e.preventDefault();play()}});
+draw();upd();
+</script>
+</body></html>
